@@ -10,6 +10,9 @@ package Assignment1;
 
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public class Assignment1 {
     public static void main(String[] args) {
@@ -20,19 +23,18 @@ public class Assignment1 {
         // create factory floor
         FactoryFloor factoryFloor = new FactoryFloor(height, width);
 
-        // create stations
-        Station station = new Station("", new int[] {}, "");
         List<Station> stationList = new ArrayList<>(); // list to hold at least 48 stations
 
-        // randomly generate population, TODO: ignoring duplicate positions
-        Map<String, Station> stationMap = randomlyGeneratePopulation(factoryFloor, stationList);
+        // randomly generate population of stations, TODO: ignoring duplicate positions
+        Map<String, Station> stationMap = randomlyGeneratePopulation(factoryFloor, stationList); // map to hold station# -> station info
 
-        stationMap.put("Station1", station);
 
 
         //System.out.println(Arrays.toString(randomPosition));
         //printFloor(factoryFloor, stationPosition);
-        System.out.println("Position of station: " + Arrays.toString(station.getPosition()));
+        System.out.println();
+
+
     }
 
     // print floor for visualization
@@ -54,7 +56,9 @@ public class Assignment1 {
 
             station.setName("Station" + i);
             station.setPosition(position);
+            station.setFunction(randomlyGenerateFunction());
 
+            stationList.add(new Station(station.getName(), station.getPosition(), randomlyGenerateFunction()));
             stationMap.put(station.getName(), new Station(station.getName(), station.getPosition(), randomlyGenerateFunction()));
         }
 
@@ -80,6 +84,7 @@ public class Assignment1 {
         }
     }
 
+    // TODO: refactor. currently won't work
     static void printFloor(FactoryFloor factoryFloor, int[] stationPosition) {
         int height = factoryFloor.getHeight();
         int width = factoryFloor.getWidth();
@@ -106,6 +111,45 @@ public class Assignment1 {
             }
             System.out.println(); // move to the next row
         }
+    }
+}
+
+// TODO: write
+class GeneticAlgorithm {
+    // TODO: write main algorithm loop
+
+    static List<Individual> initializePopulation(int size) {
+        return null;
+    }
+
+    static void evaluatePopulationFitness(List<Individual> population) {
+        // evaluate the fitness of each individual based on problem-specific fitness function
+    }
+
+    static List<Individual> selectParents(List<Individual> population) {
+        // select parents for crossover
+        return null;
+    }
+
+    static List<Individual> createOffspring(List<Individual> population) {
+        // perform crossover and mutation to create new population
+        return null;
+    }
+
+    static Individual getBestIndividual(List<Individual> population) {
+        // find and return the best individual in the population
+        return null;
+    }
+
+
+}
+
+//TODO: write
+class Individual {
+    // define representation and fitness calculation for an individual
+    double getFitness() {
+        // calculate and return the fitness of this individual
+        return 0.0;
     }
 }
 
