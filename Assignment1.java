@@ -1,161 +1,142 @@
 package Assignment1;
 
-/*
-    Tristan Allen
-    Suny Oswego CSC375
-    Assignment1
-
-    A parallel genetic algorithm for a Facilities Layout problem
- */
-
-import java.util.*;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.Random;
 
 public class Assignment1 {
     public static void main(String[] args) {
-        // define dimensions of the factory floor
+        // define dimensions of factory floor
         int height = 30;
         int width = 20;
-
-        // create factory floor
         FactoryFloor factoryFloor = new FactoryFloor(height, width);
 
-        List<Station> stationList = new ArrayList<>(); // list to hold at least 48 stations
+        // run genetic algorithm
+        GeneticAlgorithm ga = new GeneticAlgorithm(48, factoryFloor);
+        ga.run();
 
-        // randomly generate population of stations, TODO: ignoring duplicate positions
-        Map<String, Station> stationMap = randomlyGeneratePopulation(factoryFloor, stationList); // map to hold station# -> station info
-
-
-
-        //System.out.println(Arrays.toString(randomPosition));
-        //printFloor(factoryFloor, stationPosition);
         System.out.println();
+    }
+}
 
+// TODO: write
+class GeneticAlgorithm {
+    private final List<Station> population;
 
+    // TODO: write main algorithm loop
+    public GeneticAlgorithm(int populationSize, FactoryFloor factoryFloor) {
+        population = initializePopulation(populationSize, factoryFloor);
+        //System.out.println(population);
     }
 
-    // print floor for visualization
+    private List<Station> initializePopulation(int size, FactoryFloor factoryFloor) {
+        List<Station> population = new ArrayList<>();
 
-    static Map<String, Station> randomlyGeneratePopulation(FactoryFloor factoryFloor, List<Station> stationList) {
-        int[] position;
-        Map<String, Station> stationMap = new HashMap<>();
-        Station station = new Station("", new int[]{}, "");
-
-        for (int i = 0; i < 49; i++) {
-            Random random = new Random();
-            int height = factoryFloor.getHeight();
-            int width = factoryFloor.getWidth();
-
-            int randomHeight = random.nextInt(height);
-            int randomWidth = random.nextInt(width);
-
-            position = new int[]{randomHeight, randomWidth};
-
-            station.setName("Station" + i);
-            station.setPosition(position);
-            station.setFunction(randomlyGenerateFunction());
-
-            stationList.add(new Station(station.getName(), station.getPosition(), randomlyGenerateFunction()));
-            stationMap.put(station.getName(), new Station(station.getName(), station.getPosition(), randomlyGenerateFunction()));
+        for (int i = 0; i < size; i++) {
+            Station station = generateRandomPopulation(factoryFloor, i);
+            population.add(station);
         }
 
-        return stationMap;
+        return population;
     }
 
-    // TODO: probably delete this and make an actual function solution
-    static String randomlyGenerateFunction() {
-        String function1 = "Cutting";
-        String function2 = "Assembly";
+    public void run() {
+        evaluatePopulationFitness(population);
+    }
+
+    private static Station generateRandomPopulation(FactoryFloor factoryFloor, int count) {
+        Random random = new Random();
+        int height = factoryFloor.getHeight();
+        int width = factoryFloor.getWidth();
+
+        int randomHeight = random.nextInt(height);
+        int randomWidth = random.nextInt(width);
+
+        Station station = new Station("", 0, 0, "", 0.0);
+        station.setName("Station" + count);
+        station.setX(randomHeight);
+        station.setY(randomWidth);
+        station.setFunction(randomlyAssignFunction());
+        station.setFitness(0.0); // temporarily set to 0.0, has not been calculated yet
+
+        return new Station(station.getName(), station.getX(), station.getY(), station.getFunction(), station.getFitness());
+    }
+
+    private static String randomlyAssignFunction() {
+        String function1 = "Assembly";
+        String function2 = "Machinist";
         String function3 = "QualityControl";
 
         int max = 3;
         Random random = new Random();
-        int randomFunction = random.nextInt(max);
 
-        if (randomFunction == 1) {
+        int randomNumber = random.nextInt(max);
+
+        if (randomNumber == 1) {
             return function1;
-        } else if (randomFunction == 2) {
+        } else if (randomNumber == 2) {
             return function2;
         } else {
             return function3;
         }
     }
 
-    // TODO: refactor. currently won't work
-    static void printFloor(FactoryFloor factoryFloor, int[] stationPosition) {
-        int height = factoryFloor.getHeight();
-        int width = factoryFloor.getWidth();
-
-        // create a 2D character array to represent the factory floor
-        char[][] floorGrid = new char[height][width];
-
-        // initialize the grid with empty spaces
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                floorGrid[i][j] = '.';
-            }
-        }
-
-        // place the station on the grid
-        int stationRow = stationPosition[0];
-        int stationCol = stationPosition[1];
-        floorGrid[stationRow][stationCol] = 'S';
-
-        // print the grid
-        for (int i = 0; i < height; i++) {
-            for (int j = 0; j < width; j++) {
-                System.out.print(floorGrid[i][j] + " ");
-            }
-            System.out.println(); // move to the next row
-        }
-    }
-}
-
-// TODO: write
-class GeneticAlgorithm {
-    // TODO: write main algorithm loop
-
-    static List<Individual> initializePopulation(int size) {
-        return null;
-    }
-
-    static void evaluatePopulationFitness(List<Individual> population) {
+    static void evaluatePopulationFitness(List<Station> population) {
         // evaluate the fitness of each individual based on problem-specific fitness function
+        for (Station station : population) {
+            double fitness = calculateFitness(station);
+            station.setFitness(fitness);
+        }
     }
 
-    static List<Individual> selectParents(List<Individual> population) {
+    private static double calculateFitness(Station station) {
+        // TODO: implement fitness function
+        double distance = calculateDistance(station);
+        double functionValue = calculateFunctionValue(station);
+
+        // fitness score
+        return 1.0 / (distance + functionValue);
+    }
+
+    private static double calculateDistance(Station station) {
+        double x = station.getX();
+        double y = station.getY();
+
+        // euclidean distance
+        return Math.sqrt(x * x + y * y);
+    }
+
+    private static double calculateFunctionValue(Station station) {
+        String function = station.getFunction();
+
+        // TODO: probably change this. very basic for now just to move on in implementation
+        return switch (function) {
+            case "Assembly" -> 10.0;
+            case "Machinist" -> 8.0;
+            case "QualityControl" -> 7.0;
+            default -> 0.0;
+        };
+    }
+
+    static List<Station> selectParents(List<Station> population) {
         // select parents for crossover
         return null;
     }
 
-    static List<Individual> createOffspring(List<Individual> population) {
+    static List<Station> createOffspring(List<Station> population) {
         // perform crossover and mutation to create new population
         return null;
     }
 
-    static Individual getBestIndividual(List<Individual> population) {
+    static Station getBestIndividual(List<Station> population) {
         // find and return the best individual in the population
         return null;
-    }
-
-
-}
-
-//TODO: write
-class Individual {
-    // define representation and fitness calculation for an individual
-    double getFitness() {
-        // calculate and return the fitness of this individual
-        return 0.0;
     }
 }
 
 class FactoryFloor {
-    private final int height;
-    private final int width;
+    final int height;
+    final int width;
 
     public FactoryFloor(int height, int width) {
         this.height = height;
@@ -168,20 +149,28 @@ class FactoryFloor {
 
 class Station {
     private String name;
-    private int[] position;
+    private int x;
+    private int y;
     private String function;
+    private double fitness;
 
-    public Station(String name, int[] position, String function) {
+    public Station(String name, int x, int y, String function, double fitness) {
         this.name = name;
-        this.position = position;
+        this.x = x;
+        this.y = y;
         this.function = function;
+        this.fitness = fitness;
     }
     String getName() { return name; }
-    int[] getPosition() { return position; }
+    int getX() { return x; }
+    int getY() { return y; }
     String getFunction() { return function; }
+    double getFitness() { return fitness; }
 
     void setName(String name) { this.name = name; }
-    void setPosition(int[] position) { this.position = position; }
+    void setX(int x) { this.x = x; }
+    void setY(int y) { this.y = y; }
     void setFunction(String function) { this.function = function; }
+    void setFitness(double fitness) { this.fitness = fitness; }
 
 }
