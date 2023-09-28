@@ -1,15 +1,24 @@
 package Assignment1;
 
+/*
+    Tristan Allen
+    Suny Oswego CSC375
+    Assignment1
+
+    A parallel genetic algorithm for a Facilities Layout problem
+ */
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import static Assignment1.Assignment1.MAX_HEIGHT;
 
 public class Assignment1 {
+    final static int MAX_HEIGHT = 30;
+    final static int MAX_WIDTH = 30;
+
     public static void main(String[] args) {
-        // define dimensions of factory floor
-        int height = 30;
-        int width = 20;
-        FactoryFloor factoryFloor = new FactoryFloor(height, width);
+        FactoryFloor factoryFloor = new FactoryFloor(MAX_HEIGHT, MAX_WIDTH);
 
         // run genetic algorithm
         GeneticAlgorithm ga = new GeneticAlgorithm(48, factoryFloor);
@@ -19,14 +28,11 @@ public class Assignment1 {
     }
 }
 
-// TODO: write
 class GeneticAlgorithm {
-    private final List<Station> population;
+    private List<Station> population;
 
-    // TODO: write main algorithm loop
     public GeneticAlgorithm(int populationSize, FactoryFloor factoryFloor) {
         population = initializePopulation(populationSize, factoryFloor);
-        //System.out.println(population);
     }
 
     private List<Station> initializePopulation(int size, FactoryFloor factoryFloor) {
@@ -41,7 +47,38 @@ class GeneticAlgorithm {
     }
 
     public void run() {
-        evaluatePopulationFitness(population);
+        int maxGenerations = 10;
+        for (int generation = 0; generation < maxGenerations; generation++) {
+            evaluatePopulationFitness(population);
+
+            List<Station> parents = selectParents(population);
+
+            List<Station> offspring = createOffspring(parents, population.size());
+
+            population = offspring;
+
+            Station bestIndividual = getBestIndividual(population);
+
+            List<Station> bestIndividualList = new ArrayList<>();
+            storeBestIndividual(bestIndividual, bestIndividualList);
+
+            if (terminationCriteriaMet(generation)) {
+                System.out.println();
+                break;
+            }
+        }
+    }
+
+    private boolean terminationCriteriaMet(int generation) {
+        if (generation == 10) {
+            return true;
+        } // TODO: maybe monitor the fitness of the best individual (or population) over
+          // TODO: several generations and if there is no significant improvement, terminate
+        return false;
+    }
+
+    private void storeBestIndividual(Station bestIndividual, List<Station> bestIndividualList) {
+        bestIndividualList.add(bestIndividual);
     }
 
     private static Station generateRandomPopulation(FactoryFloor factoryFloor, int count) {
@@ -82,7 +119,7 @@ class GeneticAlgorithm {
     }
 
     static void evaluatePopulationFitness(List<Station> population) {
-        // evaluate the fitness of each individual based on problem-specific fitness function
+        // evaluate the fitness of each individual
         for (Station station : population) {
             double fitness = calculateFitness(station);
             station.setFitness(fitness);
@@ -120,17 +157,124 @@ class GeneticAlgorithm {
 
     static List<Station> selectParents(List<Station> population) {
         // select parents for crossover
-        return null;
+
+        List<Station> parents = new ArrayList<>();  // list of parents
+
+        // calculate the total fitness of the population
+        double totalFitness = calculateTotalFitness(population);
+
+        int numberOfParentsToSelect = population.size() / 2;
+        // perform selection for each parent
+        for (int i = 0; i < numberOfParentsToSelect; i++) {
+            // generate a random number between 0 and total fitness
+            double randomValue = Math.random() * totalFitness;
+
+            // initialize variables for roulette wheel selection
+            double cumulativeFitness = 0.0;
+            boolean parentsSelected = false;
+
+            // iterate through the population to select a parent
+            for (Station individual : population) {
+                cumulativeFitness += individual.getFitness();
+
+                // check if the current individual is selected
+                if (cumulativeFitness >= randomValue) {
+                    parents.add(individual);
+                    parentsSelected = true;
+                    break;
+                }
+            }
+            // if no parent is selected, select a random individual
+            if (!parentsSelected) {
+                int randomIndex = (int) (Math.random() * population.size());
+                parents.add(population.get(randomIndex));
+            }
+        }
+
+        return parents;
     }
 
-    static List<Station> createOffspring(List<Station> population) {
+    private static double calculateTotalFitness(List<Station> population) {
+        double totalFitness = 0.0;
+        
+        for (Station individual : population) {
+            totalFitness += individual.getFitness();
+        }
+        return totalFitness;
+    }
+
+    static List<Station> createOffspring(List<Station> parents, int populationSize) {
         // perform crossover and mutation to create new population
-        return null;
+
+        List<Station> offspring = new ArrayList<>();
+
+        // perform crossover to create offspring until the desired population size is reached
+        while (offspring.size() < populationSize) {
+            Station parent1 = parents.get((int) (Math.random() * parents.size()));
+            Station parent2 = parents.get((int) (Math.random() * parents.size()));
+
+            // apply crossover to create a child
+            Station child = crossover(parent1, parent2); // TODO: write
+
+            double mutationProbability = 0.10; // TODO: highly subject to change. fine tune to a good value.
+            mutate(child, mutationProbability);  // TODO: write
+
+            offspring.add(child);
+        }
+
+        return offspring;
+    }
+
+    static Station crossover(Station parent1, Station parent2) {
+        Station child = new Station("", 0, 0, "", 0.0);
+
+        int genomeLength = parent1.getGenome().length;
+
+        int crossoverPoint = (int) (Math.random() * genomeLength);
+
+        int[] childGenome = new int[genomeLength];
+        for (int i = 0; i < crossoverPoint; i++) {
+            childGenome[i] = parent1.getGenome()[i];
+        }
+        for (int i = 0; i < genomeLength; i++) {
+            childGenome[i] = parent2.getGenome()[i];
+        }
+
+        child.setName(parent1.getName());
+        child.setX(parent1.getX());
+        child.setY(parent1.getY());
+        String childFunction = (Math.random() < 0.5) ? parent1.getFunction() : parent2.getFunction();
+        child.setFunction(childFunction);
+        child.setFitness(calculateFitness(child));
+
+        return child;
+    }
+
+    static void mutate(Station child, double mutationProbability) {
+        int[] childGenome = child.getGenome();
+
+        for (int i = 0; i < childGenome.length; i++) {
+            if (Math.random() < mutationProbability) {
+                childGenome[i] = generateRandomGeneValue();
+            }
+        }
+    }
+
+    static int generateRandomGeneValue() {
+        Random random = new Random();
+        return random.nextInt(MAX_HEIGHT);
     }
 
     static Station getBestIndividual(List<Station> population) {
-        // find and return the best individual in the population
-        return null;
+        Station bestIndividual = population.get(0); // initialize with first individual
+
+        for (Station individual : population) {
+            if (individual.getFitness() > bestIndividual.getFitness()) { // compare fitness scores
+                bestIndividual = individual;    // update best individual
+            }
+        }
+
+        return bestIndividual;
     }
 }
 
@@ -166,6 +310,9 @@ class Station {
     int getY() { return y; }
     String getFunction() { return function; }
     double getFitness() { return fitness; }
+    int[] getGenome() {
+        return new int[]{x, y};
+    }
 
     void setName(String name) { this.name = name; }
     void setX(int x) { this.x = x; }
