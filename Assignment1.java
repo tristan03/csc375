@@ -8,7 +8,15 @@ package Assignment1;
     A parallel genetic algorithm for a Facilities Layout problem
  */
 
+import java.awt.*;
 import java.util.*;
+import java.util.List;
+import java.util.Timer;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import javax.swing.*;
+
 
 public class Assignment1 {
     public static void main(String[] args) {
@@ -16,21 +24,28 @@ public class Assignment1 {
         int width = 30;
         FactoryFloor factoryFloor = new FactoryFloor(height, width);
 
-        // run genetic algorithm
-        GeneticAlgorithm ga = new GeneticAlgorithm(50, factoryFloor);
-        ga.run();
+        int populationSize = 50;
 
-        System.out.println();
+        // run genetic algorithm
+        GeneticAlgorithm ga = new GeneticAlgorithm(populationSize, factoryFloor);
+        ga.run();
     }
 }
 
 class GeneticAlgorithm {
-    final static int MAX_GENERATIONS = 20;
-    final static double MUTATION_PROBABILITY = 0.10;
+    final static int MAX_GENERATIONS = 500;
+    final static double MUTATION_PROBABILITY = 0.50;
     final static int MAX_GENE_SIZE = 30;
     private List<Station> population;
     static int stationCounter = 0;
     static Set<String> occupiedLocations = new HashSet<>();
+    private static final ExecutorService executorService;
+    private static final Lock lock = new ReentrantLock();
+
+    static {
+        int numThreads = Runtime.getRuntime().availableProcessors();
+        executorService = Executors.newFixedThreadPool(numThreads);
+    }
 
     public GeneticAlgorithm(int populationSize, FactoryFloor factoryFloor) {
         population = initializePopulation(populationSize, factoryFloor);
@@ -50,59 +65,74 @@ class GeneticAlgorithm {
     public void run() {
         List<Station> bestIndividualList = new ArrayList<>();
         Set<String> uniqueIndividualNames = new HashSet<>();
-//        System.out.println("Initial population: ");
-//        evaluatePopulationFitness(population);
-//        for (Station station : population) {
-//            station.identify();
-//        }
-//        System.out.println();
-        for (int generation = 0; generation < MAX_GENERATIONS; generation++) {
-            //occupiedLocations.clear();
 
-            evaluatePopulationFitness(population);
+        JFrame frame = new JFrame("Factory Floor");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        FactoryFloor factoryFloor = new FactoryFloor(100, 100, population);
 
-            List<Station> parents = selectParents(population);
+        frame.getContentPane().add(factoryFloor);
+        frame.setSize(700, 700);
+        frame.setVisible(true);
 
-            population = createOffspring(parents, population.size(), generation);
+//        Timer timer = new Timer(true);
+//        timer.scheduleAtFixedRate(new TimerTask() {
+//            @Override
+//            public void run() {
+//                SwingUtilities.invokeLater(factoryFloor::repaint);
+//            }
+//        }, 0, 100);
 
-            Station bestIndividual = getBestIndividual(population);
+        try {
+            for (int generation = 0; generation < MAX_GENERATIONS; generation++) {
+                evaluatePopulationFitness(population);  // running in parallel
 
+                List<Station> parents = selectParents(population);  // running in parallel
 
-            String bestIndName = bestIndividual.getName();
+                population = createOffspring(parents, population.size(), generation);   // methods inside running in parallel
 
-            if (uniqueIndividualNames.add(bestIndName)) {
-                bestIndividualList.add(bestIndividual);
+                Station bestIndividual = getBestIndividual(population);
+
+                String bestIndName = bestIndividual.getName();
+
+                if (uniqueIndividualNames.add(bestIndName)) {
+                    bestIndividualList.add(bestIndividual);
+                }
+
+                bestIndividualList.sort(Comparator.comparingDouble(Station::getFitness));
+
+                population.set(0, bestIndividual);
+
+                if (generation % 20 == 0) {
+                    factoryFloor.displayFloor(population, 2000);    // periodically update graph (every 2 seconds)
+                }
+
+                if (generation == MAX_GENERATIONS - 1) {
+//                    timer.cancel();
+                    renameStations(population);
+                    factoryFloor.displayFloor(population, 1);    // display last population
+                    break;
+                }
             }
-
-            population.remove(bestIndividual);
-
-            if (terminationCriteriaMet(generation)) {
-                break;
-            }
-
-        }
-        //System.out.println("Ending population: ");
-        for (Station station : bestIndividualList) {
-            station.identify();
+        } finally {
+            executorService.shutdown();
         }
     }
 
-    private boolean terminationCriteriaMet(int generation) {
-        if (generation == MAX_GENERATIONS) {
-            return true;
-        } // TODO: maybe monitor the fitness of the best individual (or population) over
-          // TODO: several generations and if there is no significant improvement, terminate
-        return false;
-    }
 
     private static String generateUniqueName() {
         return "Station" + stationCounter++;
     }
 
+    private void renameStations(List<Station> population) {
+        for (int i = 0; i < population.size(); i++) {
+            population.get(i).setName("Station" + i);
+        }
+    }
+
     private static Station generateRandomPopulation(FactoryFloor factoryFloor, int count) {
         Random random = new Random();
-        int height = factoryFloor.getHeight();
-        int width = factoryFloor.getWidth();
+        int height = factoryFloor.getFloorHeight();
+        int width = factoryFloor.getFloorWidth();
 
         Station station;
         do {
@@ -135,10 +165,26 @@ class GeneticAlgorithm {
     }
 
     static void evaluatePopulationFitness(List<Station> population) {
-        // evaluate the fitness of each individual
-        for (Station station : population) {
-            double fitness = calculateFitness(station);
-            station.setFitness(fitness);
+        try {
+            List<Callable<Void>> tasks = new ArrayList<>();
+
+            for (Station station : population) {
+                tasks.add(() -> {
+                    double fitness = calculateFitness(station);
+
+                    lock.lock();
+                    try {
+                        station.setFitness(fitness);
+                    } finally {
+                        lock.unlock();
+                    }
+                    return null;
+                });
+            }
+
+            executorService.invokeAll(tasks);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
         }
     }
 
@@ -155,7 +201,6 @@ class GeneticAlgorithm {
         double x = station.getX();
         double y = station.getY();
 
-        // euclidean distance
         return Math.sqrt(x * x + y * y);
     }
 
@@ -164,9 +209,8 @@ class GeneticAlgorithm {
 
         // TODO: probably change this. very basic for now just to move on in implementation
         return switch (function) {
-            case "Assembly" -> 10.0;
-            case "Machinist" -> 8.0;
-            case "QualityControl" -> 7.0;
+            case "Assembly" -> 0.8;
+            case "Machinist" -> 1.0;
             default -> 0.0;
         };
     }
@@ -179,33 +223,40 @@ class GeneticAlgorithm {
         // calculate the total fitness of the population
         double totalFitness = calculateTotalFitness(population);
 
-        int numberOfParentsToSelect = population.size() / 2;
-        // perform selection for each parent
-        for (int i = 0; i < numberOfParentsToSelect; i++) {
-            // generate a random number between 0 and total fitness
-            double randomValue = Math.random() * totalFitness;
+        //int numberOfParentsToSelect = population.size() / 2;
 
-            // initialize variables for roulette wheel selection
-            double cumulativeFitness = 0.0;
-            boolean parentsSelected = false;
+        // create a list of tasks for parallel execution
+        List<Callable<Station>> tasks = new ArrayList<>();
 
-            // iterate through the population to select a parent
-            for (Station individual : population) {
-                cumulativeFitness += individual.getFitness();
+        for (int i = 0; i < population.size() / 2; i++) {
+            tasks.add(() -> {
+                double randomValue = Math.random() * totalFitness;
+                double cumulativeFitness = 0.0;
 
-                // check if the current individual is selected
+                for (Station individual : population) {
+                    cumulativeFitness += individual.getFitness();
 
-                if (cumulativeFitness >= randomValue) {
-                    parents.add(individual);
-                    parentsSelected = true;
-                    break;
+                    if (cumulativeFitness >= randomValue) {
+                        return individual;
+                    }
                 }
-            }
-            // if no parent is selected, select a random individual
-            if (!parentsSelected) {
+
+                // if no parent is selected, select a random individual
                 int randomIndex = (int) (Math.random() * population.size());
-                parents.add(population.get(randomIndex));
+                return population.get(randomIndex);
+            });
+        }
+
+        try {
+            // invokeAll will execute tasks in parallel and return a list of Futures
+            List<Future<Station>> results = executorService.invokeAll(tasks);
+
+            // extract results from the completed Futures
+            for (Future<Station> result : results) {
+                parents.add(result.get());
             }
+        } catch (InterruptedException | ExecutionException ex) {
+            ex.printStackTrace();
         }
 
         return parents;
@@ -213,7 +264,7 @@ class GeneticAlgorithm {
 
     private static double calculateTotalFitness(List<Station> population) {
         double totalFitness = 0.0;
-        
+
         for (Station individual : population) {
             totalFitness += individual.getFitness();
         }
@@ -225,19 +276,14 @@ class GeneticAlgorithm {
 
         List<Station> offspring = new ArrayList<>();
 
-//        if (generation != 0) {
-//            parents.remove(getBestIndividual(parents));
-//        }
-
         // perform crossover to create offspring until the desired population size is reached
         while (offspring.size() < populationSize) {
             Station parent1 = parents.get((int) (Math.random() * parents.size()));
             Station parent2 = parents.get((int) (Math.random() * parents.size()));
 
-            // apply crossover to create a child
             Station child = crossover(parent1, parent2);
 
-            mutate(child);
+            mutate(child, generation);
 
             if (!occupiedLocations.contains(child.getLocationKey())) {
                 offspring.add(child);
@@ -255,55 +301,98 @@ class GeneticAlgorithm {
 
         int crossoverPoint = 1 + (int) (Math.random() * genomeLength - 2);
 
-        int[] childGenome = new int[genomeLength];
-        for (int i = 0; i < crossoverPoint; i++) {
-            childGenome[i] = parent1.getGenome()[i];
-        }
-        for (int i = crossoverPoint; i < genomeLength; i++) {
-            childGenome[i] = parent2.getGenome()[i];
-        }
+        Callable<Station> crossoverTask = () -> {
+            int[] childGenome = new int[genomeLength];
+            for (int i = 0; i < crossoverPoint; i++) {
+                childGenome[i] = parent1.getGenome()[i];
+            }
+            for (int i = crossoverPoint; i < genomeLength; i++) {
+                childGenome[i] = parent2.getGenome()[i];
+            }
 
-        child.setName(generateUniqueName());
-        child.setX(parent1.getX());
-        child.setY(parent1.getY());
-        String childFunction = (Math.random() < 0.5) ? parent1.getFunction() : parent2.getFunction();
-        child.setFunction(childFunction);
-        child.setFitness(calculateFitness(child));
+            lock.lock();
+            try {
+                child.setName(generateUniqueName());
+                child.setX(childGenome[0]);
+                child.setY(childGenome[1]);
+                //String childFunction = (Math.random() < 0.5) ? parent1.getFunction() : parent2.getFunction();
+                child.setFunction(randomlyAssignFunction());
+                child.setFitness(calculateFitness(child));
+            } finally {
+                lock.unlock();
+            }
+            return child;
+        };
 
+        try {
+            // submit the task to the executor service
+            Future<Station> future = executorService.submit(crossoverTask);
+
+            // wait for the task to complete
+            return future.get();
+        } catch (InterruptedException | ExecutionException ex) {
+            ex.printStackTrace();
+        }
         return child;
     }
 
-    static void mutate(Station child) {
-        int[] childGenome = child.getGenome();
-        Station tempChild = new Station("", childGenome[0], childGenome[1], "", 0.0);
+    static void mutate(Station child, int generation) {
+        Callable<Void> mutateTask = () -> {
+            int[] childGenome = child.getGenome();
+            Station tempChild = new Station("", childGenome[0], childGenome[1], "", 0.0);
 
-        for (int i = 0; i < childGenome.length; i++) {
-            if (Math.random() < MUTATION_PROBABILITY) {
-                childGenome[i] = generateRandomGeneValue();
-            }
-        }
-
-        // Use a temporary station to check for uniqueness after mutation
-        tempChild.setGenome(childGenome);
-
-        // Ensure unique location after mutation
-        while (!occupiedLocations.add(tempChild.getLocationKey())) {
-            // If the location is not unique, revert the mutation and retry
             for (int i = 0; i < childGenome.length; i++) {
                 if (Math.random() < MUTATION_PROBABILITY) {
                     childGenome[i] = generateRandomGeneValue();
                 }
             }
-            tempChild.setGenome(childGenome);
+
+            lock.lock();
+            try {
+                int temp = generation;
+                // Use a temporary station to check for uniqueness after mutation
+                tempChild.setGenome(childGenome);
+
+                int maxRetries = 100;
+
+                // ensure unique location after mutation
+                while (!occupiedLocations.add(tempChild.getLocationKey())) {
+                    // If the location is not unique, revert the mutation and retry
+                    for (int i = 0; i < childGenome.length; i++) {
+                        if (Math.random() < MUTATION_PROBABILITY) {
+                            childGenome[i] = generateRandomGeneValue();
+                        }
+                    }
+
+                    if (maxRetries-- == 0) {
+                        break;
+                    }
+
+                    tempChild.setGenome(childGenome);
+                }
+
+                // apply the mutation to the child
+                child.setGenome(childGenome);
+
+                // remove the original location to avoid false positives when checking for duplicates
+                occupiedLocations.remove(child.getLocationKey());
+            } finally {
+                lock.unlock();
+            }
+
+            return null;
+        };
+
+        try {
+            // submit the task to the executor service
+            Future<Void> future = executorService.submit(mutateTask);
+
+            // wait for the task to complete
+            future.get();
+        } catch (InterruptedException | ExecutionException ex) {
+            ex.printStackTrace();  // Handle exceptions appropriately
         }
-
-        // Apply the mutation to the child
-        child.setGenome(childGenome);
-
-        // Remove the original location to avoid false positives when checking for duplicates
-        occupiedLocations.remove(child.getLocationKey());
     }
-
 
     static int generateRandomGeneValue() {
         Random random = new Random();
@@ -323,17 +412,77 @@ class GeneticAlgorithm {
     }
 }
 
-class FactoryFloor {
+class RepaintTask extends TimerTask {
+    private final FactoryFloor factoryFloor;
+
+    public RepaintTask(FactoryFloor factoryFloor) {
+        this.factoryFloor = factoryFloor;
+    }
+
+
+    @Override
+    public void run() {
+        SwingUtilities.invokeLater(factoryFloor::repaint);
+    }
+}
+
+class FactoryFloor extends JPanel {
     final int height;
     final int width;
+
+    private Timer timer;
+
+    List<Station> population;
 
     public FactoryFloor(int height, int width) {
         this.height = height;
         this.width = width;
     }
 
-    int getHeight() { return height; }
-    int getWidth() { return width; }
+    public FactoryFloor(int height, int width, List<Station> population) {
+        this.height = height;
+        this.width = width;
+        this.population = population;
+    }
+
+    public void displayFloor(List<Station> updatedPopulation, int repaintDelay) {
+        this.population = updatedPopulation;
+
+//        if (timer != null) {
+//            timer.cancel();
+//        }
+
+        timer = new Timer(true);
+        timer.scheduleAtFixedRate(new RepaintTask(this), 0, repaintDelay);
+
+        repaint();
+    }
+
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+
+        // draw stations
+        for (Station station : population) {
+            int x = station.getX() * 20;
+            int y = station.getY() * 20;
+
+            if (station.getFunction().equals("Machinist")) {
+                g.setColor(Color.BLUE);
+                g.fillRect(x, y, 10, 10);
+            } else {
+                g.setColor(Color.GREEN);
+                g.fillOval(x, y, 10, 10);
+            }
+            g.setColor(Color.BLACK);
+            g.drawString(station.getName(), x, y);
+        }
+    }
+    int getFloorHeight() {
+        return height;
+    }
+    int getFloorWidth() {
+        return width;
+    }
 }
 
 class Station {
@@ -349,11 +498,6 @@ class Station {
         this.y = y;
         this.function = function;
         this.fitness = fitness;
-    }
-
-    void identify() {
-        System.out.println("Name: " + getName() + " | Genome: " + Arrays.toString(getGenome()) + " | Function : " +
-                getFunction() + " | Fitness: " + getFitness());
     }
 
     public String getLocationKey() {
