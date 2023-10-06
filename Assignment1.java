@@ -8,6 +8,8 @@ package Assignment1;
     A parallel genetic algorithm for a Facilities Layout problem
  */
 
+
+import javax.swing.*;
 import java.awt.*;
 import java.util.*;
 import java.util.List;
@@ -15,30 +17,27 @@ import java.util.Timer;
 import java.util.concurrent.*;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
-import javax.swing.*;
-
 
 public class Assignment1 {
     public static void main(String[] args) {
-        int height = 30;
-        int width = 30;
-        FactoryFloor factoryFloor = new FactoryFloor(height, width);
-
         int populationSize = 50;
-
-        // run genetic algorithm
-        GeneticAlgorithm ga = new GeneticAlgorithm(populationSize, factoryFloor);
+        GeneticAlgorithm ga = new GeneticAlgorithm(populationSize);
         ga.run();
     }
 }
 
 class GeneticAlgorithm {
-    final static int MAX_GENERATIONS = 500;
-    final static double MUTATION_PROBABILITY = 0.50;
+    final static int MAX_GENERATIONS = 100;
+    final static double MUTATION_PROBABILITY = 0.10;
     final static int MAX_GENE_SIZE = 30;
-    private List<Station> population;
     static int stationCounter = 0;
+    private static List<Station> population;
     static Set<String> occupiedLocations = new HashSet<>();
+
+    static Map<Pair<Station, Station>, Double> stationPairMap;  // map to hold a pair of Stations -> affinity value
+    public GeneticAlgorithm(int populationSize) {
+        population = initializePopulation(populationSize);
+    }
     private static final ExecutorService executorService;
     private static final Lock lock = new ReentrantLock();
 
@@ -47,92 +46,21 @@ class GeneticAlgorithm {
         executorService = Executors.newFixedThreadPool(numThreads);
     }
 
-    public GeneticAlgorithm(int populationSize, FactoryFloor factoryFloor) {
-        population = initializePopulation(populationSize, factoryFloor);
-    }
-
-    private List<Station> initializePopulation(int size, FactoryFloor factoryFloor) {
+    private static List<Station> initializePopulation(int size) {
         List<Station> population = new ArrayList<>();
 
         for (int i = 0; i < size; i++) {
-            Station station = generateRandomPopulation(factoryFloor, i);
+            Station station = generateRandomPopulation(i);
             population.add(station);
         }
 
         return population;
     }
 
-    public void run() {
-        List<Station> bestIndividualList = new ArrayList<>();
-        Set<String> uniqueIndividualNames = new HashSet<>();
-
-        JFrame frame = new JFrame("Factory Floor");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        FactoryFloor factoryFloor = new FactoryFloor(100, 100, population);
-
-        frame.getContentPane().add(factoryFloor);
-        frame.setSize(700, 700);
-        frame.setVisible(true);
-
-//        Timer timer = new Timer(true);
-//        timer.scheduleAtFixedRate(new TimerTask() {
-//            @Override
-//            public void run() {
-//                SwingUtilities.invokeLater(factoryFloor::repaint);
-//            }
-//        }, 0, 100);
-
-        try {
-            for (int generation = 0; generation < MAX_GENERATIONS; generation++) {
-                evaluatePopulationFitness(population);  // running in parallel
-
-                List<Station> parents = selectParents(population);  // running in parallel
-
-                population = createOffspring(parents, population.size(), generation);   // methods inside running in parallel
-
-                Station bestIndividual = getBestIndividual(population);
-
-                String bestIndName = bestIndividual.getName();
-
-                if (uniqueIndividualNames.add(bestIndName)) {
-                    bestIndividualList.add(bestIndividual);
-                }
-
-                bestIndividualList.sort(Comparator.comparingDouble(Station::getFitness));
-
-                population.set(0, bestIndividual);
-
-                if (generation % 20 == 0) {
-                    factoryFloor.displayFloor(population, 2000);    // periodically update graph (every 2 seconds)
-                }
-
-                if (generation == MAX_GENERATIONS - 1) {
-//                    timer.cancel();
-                    renameStations(population);
-                    factoryFloor.displayFloor(population, 1);    // display last population
-                    break;
-                }
-            }
-        } finally {
-            executorService.shutdown();
-        }
-    }
-
-
-    private static String generateUniqueName() {
-        return "Station" + stationCounter++;
-    }
-
-    private void renameStations(List<Station> population) {
-        for (int i = 0; i < population.size(); i++) {
-            population.get(i).setName("Station" + i);
-        }
-    }
-
-    private static Station generateRandomPopulation(FactoryFloor factoryFloor, int count) {
+    private static Station generateRandomPopulation(int count) {
         Random random = new Random();
-        int height = factoryFloor.getFloorHeight();
-        int width = factoryFloor.getFloorWidth();
+        int height = 30;
+        int width = 30;
 
         Station station;
         do {
@@ -164,32 +92,59 @@ class GeneticAlgorithm {
         }
     }
 
-    static void evaluatePopulationFitness(List<Station> population) {
-        try {
-            List<Callable<Void>> tasks = new ArrayList<>();
+    public void run() {
+        List<Station> bestIndividualList = new ArrayList<>();
+        Set<String> uniqueIndividualNames = new HashSet<>();
 
-            for (Station station : population) {
-                tasks.add(() -> {
-                    double fitness = calculateFitness(station);
+        JFrame frame = new JFrame("Factory Floor");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        FactoryFloor factoryFloor = new FactoryFloor(100, 100, population);
 
-                    lock.lock();
-                    try {
-                        station.setFitness(fitness);
-                    } finally {
-                        lock.unlock();
-                    }
-                    return null;
-                });
+        frame.getContentPane().add(factoryFloor);
+        frame.setSize(500, 500);
+        frame.setVisible(true);
+
+        for (int generation = 0; generation < MAX_GENERATIONS; generation++) {
+            evaluatePopulationFitness(population);
+
+            stationPairMap = evaluatePairPopulationAffinity(population);
+
+            List<Station> parents = selectParents(population);
+
+            population = createOffspring(parents, population.size());
+
+            Station bestIndividual = getBestIndividual(population);
+
+            String bestIndName = bestIndividual.getName();
+
+            if (uniqueIndividualNames.add(bestIndName)) {
+                bestIndividualList.add(bestIndividual);
             }
 
-            executorService.invokeAll(tasks);
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+            bestIndividualList.sort(Comparator.comparingDouble(Station::getFitness));
+
+            population.set(0, bestIndividual);
+
+            if (generation % 20 == 0) {
+                factoryFloor.displayFloor(stationPairMap, 2000);    // periodically update graph (every 20 generations)
+            }
+
+            if (generation == MAX_GENERATIONS - 1) {
+                factoryFloor.displayFloor(stationPairMap, 1);    // display final population
+                break;
+            }
+        }
+
+    }
+
+    static void evaluatePopulationFitness(List<Station> population) {
+        for (Station station : population) {
+            double fitness = calculateFitness(station);
+            station.setFitness(fitness);
         }
     }
 
     private static double calculateFitness(Station station) {
-        // TODO: implement fitness function
         double distance = calculateDistance(station);
         double functionValue = calculateFunctionValue(station);
 
@@ -207,61 +162,114 @@ class GeneticAlgorithm {
     private static double calculateFunctionValue(Station station) {
         String function = station.getFunction();
 
-        // TODO: probably change this. very basic for now just to move on in implementation
         return switch (function) {
-            case "Assembly" -> 0.8;
-            case "Machinist" -> 1.0;
+            case "Assembly", "Machinist" -> 1.0;
             default -> 0.0;
         };
     }
 
-    static List<Station> selectParents(List<Station> population) {
-        // select parents for crossover
 
-        List<Station> parents = new ArrayList<>();  // list of parents
+    // find best pair for each station (affinity of placing stations A and B near each other based on function and distance)
+    private static Map<Pair<Station, Station>, Double> evaluatePairPopulationAffinity(List<Station> population) {
+        Map<Pair<Station, Station>, Double> affinityMap = new HashMap<>();  // map to return affinity scores for each pair
+        Pair<Station, Station> currentBestPair = null;
+        double currentBestAffinity = 0.0;
+        double affinity;
 
-        // calculate the total fitness of the population
-        double totalFitness = calculateTotalFitness(population);
+        for (int i = 0; i < population.size(); i++) {   // compare station A to every station B
+            Station stationA = population.get(i);
 
-        //int numberOfParentsToSelect = population.size() / 2;
+            for (int j = 0; j < population.size(); j++) {
+                if (i != j) {
+                    Station stationB = population.get(j);
 
-        // create a list of tasks for parallel execution
-        List<Callable<Station>> tasks = new ArrayList<>();
+                    affinity = calculatePairAffinity(stationA, stationB);
 
-        for (int i = 0; i < population.size() / 2; i++) {
-            tasks.add(() -> {
-                double randomValue = Math.random() * totalFitness;
-                double cumulativeFitness = 0.0;
-
-                for (Station individual : population) {
-                    cumulativeFitness += individual.getFitness();
-
-                    if (cumulativeFitness >= randomValue) {
-                        return individual;
+                    // find the best pair
+                    if (currentBestPair == null) {
+                        currentBestPair = new Pair<>(stationA, stationB);
+                        currentBestAffinity = affinity;
+                    } else if (affinity > currentBestAffinity){
+                        currentBestAffinity = affinity;
+                        currentBestPair = new Pair<>(stationA, stationB);
                     }
                 }
-
-                // if no parent is selected, select a random individual
-                int randomIndex = (int) (Math.random() * population.size());
-                return population.get(randomIndex);
-            });
+            }
+            // add best pair to the affinityMap
+            assert currentBestPair != null;
+            affinityMap.put(new Pair<>(currentBestPair.getFirst(), currentBestPair.getSecond()), currentBestAffinity);
+            currentBestPair = null;
         }
 
-        try {
-            // invokeAll will execute tasks in parallel and return a list of Futures
-            List<Future<Station>> results = executorService.invokeAll(tasks);
+        return affinityMap;
+    }
 
-            // extract results from the completed Futures
-            for (Future<Station> result : results) {
-                parents.add(result.get());
+
+    private static double calculatePairAffinity(Station station1, Station station2) {
+        // calculate affinity based on distance and function
+        double distanceAffinity = calculatePairDistanceAffinity(station1, station2);
+        double functionAffinity = calculateFunctionAffinity(station1, station2);
+
+        return distanceAffinity * functionAffinity;
+    }
+
+    // calculate affinity based on distance
+    private static double calculatePairDistanceAffinity(Station stationA, Station stationB) {
+        double xa = stationA.getX();
+        double ya = stationA.getY();
+
+        double xb = stationB.getX();
+        double yb = stationB.getY();
+
+        double distance = Math.sqrt((xa - xb) * (xa - xb) + (ya - yb) * (ya - yb));
+
+        return 1.0 / (distance + 1);
+    }
+
+    // calculate affinity based on function
+    private static double calculateFunctionAffinity(Station stationA, Station stationB) {
+        String functionA = stationA.getFunction();
+        String functionB = stationB.getFunction();
+
+        if (functionA.equals(functionB)) {
+            return 1.0;        // weight higher if they have the same function
+        } else {
+            return 0.5;
+        }
+    }
+
+    static List<Station> selectParents(List<Station> population) {
+        List<Station> parents = new ArrayList<>();
+
+        double totalFitness = calculateTotalFitness(population);    // total fitness across the whole population
+
+        for (int i = 0; i < population.size(); i++) {
+            double randomValue = Math.random() * totalFitness;
+
+            double cumulativeFitness = 0.0;
+            boolean parentsSelected = false;
+
+            for (Station station : population) {
+                cumulativeFitness += station.getFitness();
+
+                if (cumulativeFitness >= randomValue) {
+                    parents.add(station);
+                    parentsSelected = true;
+                    break;
+                }
             }
-        } catch (InterruptedException | ExecutionException ex) {
-            ex.printStackTrace();
+
+            // if no parent is selected, select a random station
+            if (!parentsSelected) {
+                int randomIndex = (int) (Math.random() * population.size());
+                parents.add(population.get(randomIndex));
+            }
         }
 
         return parents;
     }
 
+    // calculate total fitness across the whole population
     private static double calculateTotalFitness(List<Station> population) {
         double totalFitness = 0.0;
 
@@ -271,29 +279,26 @@ class GeneticAlgorithm {
         return totalFitness;
     }
 
-    static List<Station> createOffspring(List<Station> parents, int populationSize, int generation) {
-        // perform crossover and mutation to create new population
-
+    static List<Station> createOffspring(List<Station> parents, int populationSize) {
         List<Station> offspring = new ArrayList<>();
 
-        // perform crossover to create offspring until the desired population size is reached
-        while (offspring.size() < populationSize) {
+        while(offspring.size() < populationSize) {
             Station parent1 = parents.get((int) (Math.random() * parents.size()));
             Station parent2 = parents.get((int) (Math.random() * parents.size()));
 
             Station child = crossover(parent1, parent2);
+            mutate(child);
 
-            mutate(child, generation);
-
+            // don't add duplicate locations
             if (!occupiedLocations.contains(child.getLocationKey())) {
                 offspring.add(child);
                 occupiedLocations.add(child.getLocationKey());
             }
         }
-
         return offspring;
     }
 
+    // crossover method running in parallel
     static Station crossover(Station parent1, Station parent2) {
         Station child = new Station("", 0, 0, "", 0.0);
 
@@ -301,6 +306,7 @@ class GeneticAlgorithm {
 
         int crossoverPoint = 1 + (int) (Math.random() * genomeLength - 2);
 
+        // running in parallel...
         Callable<Station> crossoverTask = () -> {
             int[] childGenome = new int[genomeLength];
             for (int i = 0; i < crossoverPoint; i++) {
@@ -312,11 +318,10 @@ class GeneticAlgorithm {
 
             lock.lock();
             try {
-                child.setName(generateUniqueName());
+                child.setName(generateUniqueName());    // unique name to avoid duplicate names
                 child.setX(childGenome[0]);
                 child.setY(childGenome[1]);
-                //String childFunction = (Math.random() < 0.5) ? parent1.getFunction() : parent2.getFunction();
-                child.setFunction(randomlyAssignFunction());
+                child.setFunction(crossoverFunction(parent1, parent2)); // randomly choose one of the parents functions
                 child.setFitness(calculateFitness(child));
             } finally {
                 lock.unlock();
@@ -333,10 +338,22 @@ class GeneticAlgorithm {
         } catch (InterruptedException | ExecutionException ex) {
             ex.printStackTrace();
         }
+
         return child;
     }
 
-    static void mutate(Station child, int generation) {
+    // randomly choose one of the parents functions
+    static String crossoverFunction(Station parent1, Station parent2) {
+        Random random = new Random();
+        int randomChoice = random.nextInt(2);
+
+        return (randomChoice == 0) ? parent1.getFunction() : parent2.getFunction();
+    }
+
+
+    // mutate method running in parallel
+    static void mutate(Station child) {
+        // running in parallel...
         Callable<Void> mutateTask = () -> {
             int[] childGenome = child.getGenome();
             Station tempChild = new Station("", childGenome[0], childGenome[1], "", 0.0);
@@ -344,20 +361,25 @@ class GeneticAlgorithm {
             for (int i = 0; i < childGenome.length; i++) {
                 if (Math.random() < MUTATION_PROBABILITY) {
                     childGenome[i] = generateRandomGeneValue();
+                    lock.lock();
+                    try {
+                        child.setFunction(randomlyAssignFunction()); // randomly assign function if mutation occurs so one function doesn't dominate the other
+                    } finally {
+                        lock.unlock();
+                    }
                 }
             }
 
             lock.lock();
             try {
-                int temp = generation;
-                // Use a temporary station to check for uniqueness after mutation
+                // use a temporary station to check for uniqueness after mutation
                 tempChild.setGenome(childGenome);
 
                 int maxRetries = 100;
 
                 // ensure unique location after mutation
                 while (!occupiedLocations.add(tempChild.getLocationKey())) {
-                    // If the location is not unique, revert the mutation and retry
+                    // if the location is not unique, revert the mutation and retry
                     for (int i = 0; i < childGenome.length; i++) {
                         if (Math.random() < MUTATION_PROBABILITY) {
                             childGenome[i] = generateRandomGeneValue();
@@ -390,8 +412,12 @@ class GeneticAlgorithm {
             // wait for the task to complete
             future.get();
         } catch (InterruptedException | ExecutionException ex) {
-            ex.printStackTrace();  // Handle exceptions appropriately
+            ex.printStackTrace();
         }
+    }
+
+    private static String generateUniqueName() {
+        return "Station" + stationCounter++;
     }
 
     static int generateRandomGeneValue() {
@@ -430,14 +456,9 @@ class FactoryFloor extends JPanel {
     final int height;
     final int width;
 
-    private Timer timer;
-
     List<Station> population;
 
-    public FactoryFloor(int height, int width) {
-        this.height = height;
-        this.width = width;
-    }
+    Map<Pair<Station, Station>, Double> stationPairMap;
 
     public FactoryFloor(int height, int width, List<Station> population) {
         this.height = height;
@@ -445,14 +466,10 @@ class FactoryFloor extends JPanel {
         this.population = population;
     }
 
-    public void displayFloor(List<Station> updatedPopulation, int repaintDelay) {
-        this.population = updatedPopulation;
+    public void displayFloor(Map<Pair<Station, Station>, Double> stationPairMap, int repaintDelay) {
+        this.stationPairMap = stationPairMap;
 
-//        if (timer != null) {
-//            timer.cancel();
-//        }
-
-        timer = new Timer(true);
+        Timer timer = new Timer(true);
         timer.scheduleAtFixedRate(new RepaintTask(this), 0, repaintDelay);
 
         repaint();
@@ -461,29 +478,39 @@ class FactoryFloor extends JPanel {
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
 
-        // draw stations
-        for (Station station : population) {
-            int x = station.getX() * 20;
-            int y = station.getY() * 20;
+        if (stationPairMap != null) {
+            List<Pair<Station, Station>> pairList = new ArrayList<>(stationPairMap.keySet());
 
-            if (station.getFunction().equals("Machinist")) {
-                g.setColor(Color.BLUE);
-                g.fillRect(x, y, 10, 10);
-            } else {
-                g.setColor(Color.GREEN);
-                g.fillOval(x, y, 10, 10);
+            for (Pair<Station, Station> pair : pairList) {
+                Station first = pair.getFirst();
+                Station second = pair.getSecond();
+
+                int firstX = first.getX() * 15; // scale to fit canvas
+                int firstY = first.getY() * 15; // scale to fit canvas
+
+                int secondX = second.getX() * 15; // scale to fit canvas
+                int secondY = second.getY() * 15; // scale to fit canvas
+
+                // set colors for each function, and plot
+                if (first.getFunction().equals("Machinist")) {
+                    g.setColor(Color.BLUE);
+                    g.fillRect(firstX, firstY, 10, 10);
+                    if (second.getFunction().equals("Machinist")) {
+                        g.setColor(Color.BLUE);
+                        g.fillRect(firstX, firstY, 10, 10);
+                    } else if (second.getFunction().equals("Assembly")) {
+                        g.setColor(Color.GREEN);
+                        g.fillOval(secondX, secondY, 10, 10);
+                    }
+                } else {
+                    g.setColor(Color.GREEN);
+                    g.fillOval(firstX, firstY, 10, 10);
+                }
             }
-            g.setColor(Color.BLACK);
-            g.drawString(station.getName(), x, y);
         }
     }
-    int getFloorHeight() {
-        return height;
-    }
-    int getFloorWidth() {
-        return width;
-    }
 }
+
 
 class Station {
     private String name;
@@ -522,5 +549,22 @@ class Station {
         this.x = genome[0];
         this.y = genome[1];
     }
+}
 
+class Pair<A, B> {
+    private final A first;
+    private final B second;
+
+    public Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
+    }
+
+    public A getFirst() {
+        return first;
+    }
+
+    public B getSecond() {
+        return second;
+    }
 }
