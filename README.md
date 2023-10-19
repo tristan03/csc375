@@ -1,6 +1,12 @@
 # ga-ass1-375
+
+This repository holds 3 assignments from my CSC375 Parallel Computing class at SUNY Oswego
+
+---------------------------------------------------------------------------------------------------------------
+ASSIGNMENT 1
+
 Genetic Algorithm for a Facilties Layout
---------------------------------------------------------------------------------------------------
+
 Assignment contraints: 
 
 Write a parallel genetic algorithm program for an Facilities Layout problem in which:
@@ -9,4 +15,17 @@ Write a parallel genetic algorithm program for an Facilities Layout problem in w
     There is a metric representing the benefit (affinity) of placing any two stations A and B near each other based on their Function and distance, with possibly different maximum values based on capacity or rate. The goal is to maximize total affinity.
     Each of K parallel tasks solve by (at least in part randomly) swapping or modifying station spots (possibly with holes), and occasionally exchanging parts of solutions with others. (This is the main concurrent coordination problem.) Run the program on a computer with at least 32 cores (and K at least 32). (You can develop with smaller K.)
     The program occasionally (for example twice per second) graphically displays solutions until converged or performs a given number of iterations. Details are up to you. 
---------------------------------------------------------------------------------------------------
+---------------------------------------------------------------------------------------------------------------
+ASSIGNMENT2
+
+Performance Measurement
+
+Assignment constraints:
+
+This is mainly an exercise in performance measurement. Each of the following steps has many possible variations; you are free to choose any of them.
+
+    Think of some kind of application in which a set of threads all rely on a shared collection of data; sometimes read-only, sometimes modifying the data. For example, a game-server with game-state as the collection, or a campus course scheduling system. Write a stripped-down version of this in which all the threads just emulate clients, and further strips out nearly everything except the reading and writing (while still somehow using results).
+    Write one solution using a data structure and/or locking scheme of your own devising (most likely a variant of some known technique). Write another to primarily use standard platform library components.
+    Compare the throughput of your program across at least two different loads on each of at least two different platforms. Use JMH unless you have an approved reason not to.
+    Plot your results as a set of graphs and place on a web page. 
+---------------------------------------------------------------------------------------------------------------
