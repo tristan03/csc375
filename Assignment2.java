@@ -7,23 +7,54 @@ package Assignment2;
     Exercise in performance measurement
  */
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 
 public class Assignment2 {
 
     static List<Player> playerList = new ArrayList<>();
+    static List<Player> team1 = new ArrayList<>();
+    static List<Player> team2 = new ArrayList<>();
 
     public static void main(String[] args) {
+        mainMenu();
+
         playerList = createPlayers();  // get the players for the game
+
+        // create two teams
+        Collections.shuffle(playerList);
+        int halfway = playerList.size() / 2;
+        team1 = playerList.subList(0, halfway);
+        team2 = playerList.subList(halfway, playerList.size());
 
         run();  // start the game
     }
 
+    static void mainMenu() {
+        System.out.println("Finding game... ");
+        System.out.println("Game found! ");
+        String map = findMap();
+        System.out.println("Map: " + map);
+        System.out.println();
+    }
+
+    static String findMap() {
+        String map;
+        Random random = new Random();
+        int randomNum = random.nextInt(3);
+
+        if (randomNum == 0) {
+            map = "Town";
+        } else if (randomNum == 1) {
+            map = "City";
+        } else {
+            map = "Forest";
+        }
+        return map;
+    }
+
     static List<Player> createPlayers() {
         List<Player> playerList = new ArrayList<>();    // list to hold the players
-        int numOfPlayers = 30;  // max players
+        int numOfPlayers = 20;  // max players
 
         for (int i = 0; i < numOfPlayers; i++) {
             Player player = new Player("", 0, 0, 0); // initialize a player
@@ -36,21 +67,80 @@ public class Assignment2 {
     }
 
     static void run() {
-        for (int i = 0; i < 499; i++) {
+        while (true) {
             String input = selectNames();
 
             String[] names = readInput(input);  // holds individual words for identification for actions
 
             simulate(names);
 
+            if (totalKills(team1) == 100) {
+                System.out.println("\nTeam 1 Wins!\n");
+                break;
+            } else if (totalKills(team2) == 100) {
+                System.out.println("\nTeam 2 Wins!\n");
+                break;
+            }
         }
-        // end of game
-        System.out.println("-------------------------------------------------------");
-        System.out.println("Scoreboard");
-        System.out.println("-------------------------------------------------------");
-        for (Player player : playerList) {
+
+        endGame();
+    }
+
+    private static void endGame() {
+        System.out.println("----------------------------------------------------------");
+        System.out.println("                     Scoreboard");
+        System.out.println("----------------------------------------------------------");
+
+        sortPlayerListByKillCount(team1);
+        printScoreboard(team1, 1, totalKills(team1));
+
+        System.out.println();
+
+        sortPlayerListByKillCount(team2);
+        printScoreboard(team2, 2, totalKills(team2));
+    }
+
+    public static void sortPlayerListByKillCount(List<Player> team) {
+        int n = team.size();
+        boolean swapped;
+
+        do {
+            swapped = false;
+            for (int i = 1; i < n; i++) {
+                Player player1 = team.get(i - 1);
+                Player player2 = team.get(i);
+
+                // compare players by kill count
+                if (player1.getKillCount() < player2.getKillCount()) {
+                    // swap the players
+                    team.set(i - 1, player2);
+                    team.set(i, player1);
+                    swapped = true;
+                }
+            }
+        } while (swapped);
+    }
+
+    static void printScoreboard(List<Player> team, int num, int points) {
+        String underlineCode = "\u001B[4m";
+        String resetCode = "\u001B[0m";
+
+        System.out.println(underlineCode + " Team " + num + "                    Total Kills: "  + points
+         + " " + resetCode);
+        for (Player player : team) {
             player.scoreboard();
         }
+    }
+
+    static int totalKills(List<Player> team) {
+        int playerKillCount;
+        int totalKillCount = 0;
+
+        for (Player player : team) {
+            playerKillCount = player.getKillCount();
+            totalKillCount = totalKillCount + playerKillCount;
+        }
+        return totalKillCount;
     }
 
     static String selectNames() {
@@ -60,16 +150,13 @@ public class Assignment2 {
         Player player1;
         Player player2;
 
-        int randomIdx1 = random.nextInt(playerList.size());
-        int randomIdx2 = random.nextInt(playerList.size());
+        int randomIdx1 = random.nextInt(team1.size());
+        int randomIdx2 = random.nextInt(team2.size());
 
-        if (randomIdx1 != randomIdx2) {
-            player1 = playerList.get(randomIdx1);
-            player2 = playerList.get(randomIdx2);
-            input = player1.getName() + " " + player2.getName();
-        } else {
-            input = selectNames();
-        }
+        player1 = team1.get(randomIdx1);
+        player2 = team2.get(randomIdx2);
+        input = player1.getName() + " " + player2.getName();
+
         return input;
     }
 
@@ -305,8 +392,8 @@ class Player {
     void setScore(int score) {
         this.score = score;
     }
-    void setKillCount(int killcount) {
-        this.killCount = killcount;
+    void setKillCount(int killCount) {
+        this.killCount = killCount;
     }
 
     String getName() {
@@ -319,4 +406,5 @@ class Player {
         return score;
     }
     int getKillCount() { return killCount; }
+
 }
