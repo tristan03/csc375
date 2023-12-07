@@ -1,413 +1,570 @@
+package Assignment1;
+
+/*
+    Tristan Allen
+    Suny Oswego CSC375
+    Assignment1
+
+    A parallel genetic algorithm for a Facilities Layout problem
+ */
+
+
 import javax.swing.*;
-import javax.swing.border.BevelBorder;
-import javax.swing.border.Border;
-import javax.swing.border.LineBorder;
 import java.awt.*;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.util.Random;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.*;
+import java.util.List;
+import java.util.Timer;
+import java.util.concurrent.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
-public class Mines {
-
+public class Assignment1 {
     public static void main(String[] args) {
-        startGame();
-    }
-
-    public static void startGame() {
-        Game mines = setDefaultGameSize();
-        mines.play(mines);
-    }
-
-    private static Game setDefaultGameSize() {
-        return new Game(300, 300, 9, 9, 10);
+        int populationSize = 50;
+        GeneticAlgorithm ga = new GeneticAlgorithm(populationSize);
+        ga.run();
     }
 }
 
-class Game extends JPanel {
-    private int height;
-    private int width;
-    private int rows;
-    private int cols;
-    private int numMines;
-    private boolean[][] mineLocations;  // true if there is a mine in a location
-    private JButton[][] buttonGrid;
+class GeneticAlgorithm {
+    final static int MAX_GENERATIONS = 100;
+    final static double MUTATION_PROBABILITY = 0.10;
+    final static int MAX_GENE_SIZE = 30;
+    static int stationCounter = 0;
+    private static List<Station> population;
+    static Set<String> occupiedLocations = new HashSet<>();
 
-    private boolean[][] uncoveredLocations; // true if uncovered, false if covered
-    AtomicBoolean isFirstClick = new AtomicBoolean(true);   // true when user has not selected their first click yet
+    static Map<Pair<Station, Station>, Double> stationPairMap;  // map to hold a pair of Stations -> affinity value
+    public GeneticAlgorithm(int populationSize) {
+        population = initializePopulation(populationSize);
+    }
+    private static final ExecutorService executorService;
+    private static final Lock lock = new ReentrantLock();
 
-    private int markedCounter;
-    private int deathCounter;
-    public Game (int height, int width, int rows, int cols, int numMines) {
+    static {
+        int numThreads = Runtime.getRuntime().availableProcessors();
+        executorService = Executors.newFixedThreadPool(numThreads);
+    }
+
+    private static List<Station> initializePopulation(int size) {
+        List<Station> population = new ArrayList<>();
+
+        for (int i = 0; i < size; i++) {
+            Station station = generateRandomPopulation(i);
+            population.add(station);
+        }
+
+        return population;
+    }
+
+    private static Station generateRandomPopulation(int count) {
+        Random random = new Random();
+        int height = 30;
+        int width = 30;
+
+        Station station;
+        do {
+            int randomHeight = random.nextInt(height);
+            int randomWidth = random.nextInt(width);
+
+            station = new Station("", randomHeight, randomWidth, "", 0.0);
+        } while (!occupiedLocations.add(station.getLocationKey()));
+
+        station.setName("Station" + count);
+        station.setFunction(randomlyAssignFunction());
+        station.setFitness(0.0);
+
+        return new Station(station.getName(), station.getX(), station.getY(), station.getFunction(), station.getFitness());
+    }
+
+    private static String randomlyAssignFunction() {
+        String function1 = "Assembly";
+        String function2 = "Machinist";
+
+        Random random = new Random();
+
+        int randomNumber = random.nextInt(3);
+
+        if (randomNumber == 1) {
+            return function1;
+        } else {
+            return function2;
+        }
+    }
+
+    public void run() {
+        List<Station> bestIndividualList = new ArrayList<>();
+        Set<String> uniqueIndividualNames = new HashSet<>();
+
+        JFrame frame = new JFrame("Factory Floor");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        FactoryFloor factoryFloor = new FactoryFloor(100, 100, population);
+
+        frame.getContentPane().add(factoryFloor);
+        frame.setSize(500, 500);
+        frame.setVisible(true);
+
+        for (int generation = 0; generation < MAX_GENERATIONS; generation++) {
+            evaluatePopulationFitness(population);
+
+            stationPairMap = evaluatePairPopulationAffinity(population);
+
+            List<Station> parents = selectParents(population);
+
+            population = createOffspring(parents, population.size());
+
+            Station bestIndividual = getBestIndividual(population);
+
+            String bestIndName = bestIndividual.getName();
+
+            if (uniqueIndividualNames.add(bestIndName)) {
+                bestIndividualList.add(bestIndividual);
+            }
+
+            bestIndividualList.sort(Comparator.comparingDouble(Station::getFitness));
+
+            population.set(0, bestIndividual);
+
+            if (generation % 20 == 0) {
+                factoryFloor.displayFloor(stationPairMap, 2000);    // periodically update graph (every 20 generations)
+            }
+
+            if (generation == MAX_GENERATIONS - 1) {
+                factoryFloor.displayFloor(stationPairMap, 1);    // display final population
+                break;
+            }
+        }
+
+    }
+
+    static void evaluatePopulationFitness(List<Station> population) {
+        for (Station station : population) {
+            double fitness = calculateFitness(station);
+            station.setFitness(fitness);
+        }
+    }
+
+    private static double calculateFitness(Station station) {
+        double distance = calculateDistance(station);
+        double functionValue = calculateFunctionValue(station);
+
+        // fitness score
+        return 1.0 / (distance + functionValue);
+    }
+
+    private static double calculateDistance(Station station) {
+        double x = station.getX();
+        double y = station.getY();
+
+        return Math.sqrt(x * x + y * y);
+    }
+
+    private static double calculateFunctionValue(Station station) {
+        String function = station.getFunction();
+
+        return switch (function) {
+            case "Assembly", "Machinist" -> 1.0;
+            default -> 0.0;
+        };
+    }
+
+
+    // find best pair for each station (affinity of placing stations A and B near each other based on function and distance)
+    private static Map<Pair<Station, Station>, Double> evaluatePairPopulationAffinity(List<Station> population) {
+        Map<Pair<Station, Station>, Double> affinityMap = new HashMap<>();  // map to return affinity scores for each pair
+        Pair<Station, Station> currentBestPair = null;
+        double currentBestAffinity = 0.0;
+        double affinity;
+
+        for (int i = 0; i < population.size(); i++) {   // compare station A to every station B
+            Station stationA = population.get(i);
+
+            for (int j = 0; j < population.size(); j++) {
+                if (i != j) {
+                    Station stationB = population.get(j);
+
+                    affinity = calculatePairAffinity(stationA, stationB);
+
+                    // find the best pair
+                    if (currentBestPair == null) {
+                        currentBestPair = new Pair<>(stationA, stationB);
+                        currentBestAffinity = affinity;
+                    } else if (affinity > currentBestAffinity){
+                        currentBestAffinity = affinity;
+                        currentBestPair = new Pair<>(stationA, stationB);
+                    }
+                }
+            }
+            // add best pair to the affinityMap
+            assert currentBestPair != null;
+            affinityMap.put(new Pair<>(currentBestPair.getFirst(), currentBestPair.getSecond()), currentBestAffinity);
+            currentBestPair = null;
+        }
+
+        return affinityMap;
+    }
+
+
+    private static double calculatePairAffinity(Station station1, Station station2) {
+        // calculate affinity based on distance and function
+        double distanceAffinity = calculatePairDistanceAffinity(station1, station2);
+        double functionAffinity = calculateFunctionAffinity(station1, station2);
+
+        return distanceAffinity * functionAffinity;
+    }
+
+    // calculate affinity based on distance
+    private static double calculatePairDistanceAffinity(Station stationA, Station stationB) {
+        double xa = stationA.getX();
+        double ya = stationA.getY();
+
+        double xb = stationB.getX();
+        double yb = stationB.getY();
+
+        double distance = Math.sqrt((xa - xb) * (xa - xb) + (ya - yb) * (ya - yb));
+
+        return 1.0 / (distance + 1);
+    }
+
+    // calculate affinity based on function
+    private static double calculateFunctionAffinity(Station stationA, Station stationB) {
+        String functionA = stationA.getFunction();
+        String functionB = stationB.getFunction();
+
+        if (functionA.equals(functionB)) {
+            return 1.0;        // weight higher if they have the same function
+        } else {
+            return 0.5;
+        }
+    }
+
+    static List<Station> selectParents(List<Station> population) {
+        List<Station> parents = new ArrayList<>();
+
+        double totalFitness = calculateTotalFitness(population);    // total fitness across the whole population
+
+        for (int i = 0; i < population.size(); i++) {
+            double randomValue = Math.random() * totalFitness;
+
+            double cumulativeFitness = 0.0;
+            boolean parentsSelected = false;
+
+            for (Station station : population) {
+                cumulativeFitness += station.getFitness();
+
+                if (cumulativeFitness >= randomValue) {
+                    parents.add(station);
+                    parentsSelected = true;
+                    break;
+                }
+            }
+
+            // if no parent is selected, select a random station
+            if (!parentsSelected) {
+                int randomIndex = (int) (Math.random() * population.size());
+                parents.add(population.get(randomIndex));
+            }
+        }
+
+        return parents;
+    }
+
+    // calculate total fitness across the whole population
+    private static double calculateTotalFitness(List<Station> population) {
+        double totalFitness = 0.0;
+
+        for (Station individual : population) {
+            totalFitness += individual.getFitness();
+        }
+        return totalFitness;
+    }
+
+    static List<Station> createOffspring(List<Station> parents, int populationSize) {
+        List<Station> offspring = new ArrayList<>();
+
+        while(offspring.size() < populationSize) {
+            Station parent1 = parents.get((int) (Math.random() * parents.size()));
+            Station parent2 = parents.get((int) (Math.random() * parents.size()));
+
+            Station child = crossover(parent1, parent2);
+            mutate(child);
+
+            // don't add duplicate locations
+            if (!occupiedLocations.contains(child.getLocationKey())) {
+                offspring.add(child);
+                occupiedLocations.add(child.getLocationKey());
+            }
+        }
+        return offspring;
+    }
+
+    // crossover method running in parallel
+    static Station crossover(Station parent1, Station parent2) {
+        Station child = new Station("", 0, 0, "", 0.0);
+
+        int genomeLength = parent1.getGenome().length;
+
+        int crossoverPoint = 1 + (int) (Math.random() * genomeLength - 2);
+
+        // running in parallel...
+        Callable<Station> crossoverTask = () -> {
+            int[] childGenome = new int[genomeLength];
+            for (int i = 0; i < crossoverPoint; i++) {
+                childGenome[i] = parent1.getGenome()[i];
+            }
+            for (int i = crossoverPoint; i < genomeLength; i++) {
+                childGenome[i] = parent2.getGenome()[i];
+            }
+
+            lock.lock();
+            try {
+                child.setName(generateUniqueName());    // unique name to avoid duplicate names
+                child.setX(childGenome[0]);
+                child.setY(childGenome[1]);
+                child.setFunction(crossoverFunction(parent1, parent2)); // randomly choose one of the parents functions
+                child.setFitness(calculateFitness(child));
+            } finally {
+                lock.unlock();
+            }
+            return child;
+        };
+
+        try {
+            // submit the task to the executor service
+            Future<Station> future = executorService.submit(crossoverTask);
+
+            // wait for the task to complete
+            return future.get();
+        } catch (InterruptedException | ExecutionException ex) {
+            ex.printStackTrace();
+        }
+
+        return child;
+    }
+
+    // randomly choose one of the parents functions
+    static String crossoverFunction(Station parent1, Station parent2) {
+        Random random = new Random();
+        int randomChoice = random.nextInt(2);
+
+        return (randomChoice == 0) ? parent1.getFunction() : parent2.getFunction();
+    }
+
+
+    // mutate method running in parallel
+    static void mutate(Station child) {
+        // running in parallel...
+        Callable<Void> mutateTask = () -> {
+            int[] childGenome = child.getGenome();
+            Station tempChild = new Station("", childGenome[0], childGenome[1], "", 0.0);
+
+            for (int i = 0; i < childGenome.length; i++) {
+                if (Math.random() < MUTATION_PROBABILITY) {
+                    childGenome[i] = generateRandomGeneValue();
+                    lock.lock();
+                    try {
+                        child.setFunction(randomlyAssignFunction()); // randomly assign function if mutation occurs so one function doesn't dominate the other
+                    } finally {
+                        lock.unlock();
+                    }
+                }
+            }
+
+            lock.lock();
+            try {
+                // use a temporary station to check for uniqueness after mutation
+                tempChild.setGenome(childGenome);
+
+                int maxRetries = 100;
+
+                // ensure unique location after mutation
+                while (!occupiedLocations.add(tempChild.getLocationKey())) {
+                    // if the location is not unique, revert the mutation and retry
+                    for (int i = 0; i < childGenome.length; i++) {
+                        if (Math.random() < MUTATION_PROBABILITY) {
+                            childGenome[i] = generateRandomGeneValue();
+                        }
+                    }
+
+                    if (maxRetries-- == 0) {
+                        break;
+                    }
+
+                    tempChild.setGenome(childGenome);
+                }
+
+                // apply the mutation to the child
+                child.setGenome(childGenome);
+
+                // remove the original location to avoid false positives when checking for duplicates
+                occupiedLocations.remove(child.getLocationKey());
+            } finally {
+                lock.unlock();
+            }
+
+            return null;
+        };
+
+        try {
+            // submit the task to the executor service
+            Future<Void> future = executorService.submit(mutateTask);
+
+            // wait for the task to complete
+            future.get();
+        } catch (InterruptedException | ExecutionException ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    private static String generateUniqueName() {
+        return "Station" + stationCounter++;
+    }
+
+    static int generateRandomGeneValue() {
+        Random random = new Random();
+        return random.nextInt(MAX_GENE_SIZE);
+    }
+
+    static Station getBestIndividual(List<Station> population) {
+        Station bestIndividual = population.get(0); // initialize with first individual
+
+        for (Station individual : population) {
+            if (individual.getFitness() > bestIndividual.getFitness()) { // compare fitness scores
+                bestIndividual = individual;    // update best individual
+            }
+        }
+
+        return bestIndividual;
+    }
+}
+
+class RepaintTask extends TimerTask {
+    private final FactoryFloor factoryFloor;
+
+    public RepaintTask(FactoryFloor factoryFloor) {
+        this.factoryFloor = factoryFloor;
+    }
+
+
+    @Override
+    public void run() {
+        SwingUtilities.invokeLater(factoryFloor::repaint);
+    }
+}
+
+class FactoryFloor extends JPanel {
+    final int height;
+    final int width;
+
+    List<Station> population;
+
+    Map<Pair<Station, Station>, Double> stationPairMap;
+
+    public FactoryFloor(int height, int width, List<Station> population) {
         this.height = height;
         this.width = width;
-        this.rows = rows;
-        this.cols = cols;
-        this.numMines = numMines;
+        this.population = population;
     }
 
-    void play(Game mines) {
-        int rows = mines.getRows();
-        int cols = mines.getCols();
-        buttonGrid = new JButton[rows][cols];
-        uncoveredLocations = new boolean[rows][cols];
+    public void displayFloor(Map<Pair<Station, Station>, Double> stationPairMap, int repaintDelay) {
+        this.stationPairMap = stationPairMap;
 
-        setLayout(new GridLayout(rows, cols));
-        Color backgroundColor = new Color(211, 211, 211);
-        Border border = new LineBorder(Color.GRAY, 1);
+        Timer timer = new Timer(true);
+        timer.scheduleAtFixedRate(new RepaintTask(this), 0, repaintDelay);
 
-        JLabel timerLabel = new JLabel("[0:00]  ");
-        timerLabel.setFont(new Font("Arial", Font.PLAIN, 15));
-
-        JLabel markedLabel = new JLabel("Marked: " + mines.getMarked() + " / " + mines.getNumMines());
-        markedLabel.setFont(new Font("Arial", Font.PLAIN, 15));
-
-        JLabel deathLabel = new JLabel();
-        deathLabel.setFont(new Font("Arial", Font.PLAIN, 15));
-
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < cols; col++) {
-
-                JButton button = new JButton();
-                button.setBackground(backgroundColor);
-                button.setBorder(border);
-                button.setBorder(new BevelBorder(BevelBorder.RAISED));
-                button.setActionCommand(row + "," + col);
-                button.setFont(new Font("Arial", Font.PLAIN, 25));
-
-                button.addMouseListener(new MouseAdapter() {
-
-                    @Override
-                    public void mousePressed(MouseEvent e) {
-                        button.setBorder(new BevelBorder(BevelBorder.LOWERED));
-                        button.setBackground(Color.LIGHT_GRAY);
-                    }
-
-                    @Override
-                    public void mouseReleased(MouseEvent e) {
-                        button.setBorder(new BevelBorder(BevelBorder.RAISED));
-                    }
-
-                    @Override
-                    public void mouseClicked(MouseEvent e) {
-                        JButton clickedButton = (JButton) e.getSource();
-                        String command = clickedButton.getActionCommand();
-                        String[] parts = command.split(",");
-                        int clickedRow = Integer.parseInt(parts[0]);
-                        int clickedCol = Integer.parseInt(parts[1]);
-
-                        if (SwingUtilities.isLeftMouseButton(e)) {
-
-                            if (isFirstClick.get()) {
-                                isFirstClick.set(false);
-
-                                generateMines(clickedRow, clickedCol);
-
-                                floodFill(clickedRow, clickedCol);
-                            }
-
-                            if (mineLocations[clickedRow][clickedCol]) {
-                                buttonGrid[clickedRow][clickedCol].setBackground(Color.RED);
-                                buttonGrid[clickedRow][clickedCol].setBackground(backgroundColor);
-                                buttonGrid[clickedRow][clickedCol].setBackground(Color.RED);
-
-                                markedLabel.setText("DEAD!");
-                                deathCounter++;
-                                deathLabel.setText("Deaths: " + mines.getDeaths());
-                            } else {
-
-                                int nearbyMines = countNearbyMines(clickedRow, clickedCol);
-
-                                button.setBorder(new BevelBorder(BevelBorder.LOWERED));
-                                if (nearbyMines != 0) {
-                                    button.setForeground(getColor(nearbyMines));
-                                    buttonGrid[clickedRow][clickedCol].setText(String.valueOf(nearbyMines));
-                                    uncoveredLocations[clickedRow][clickedCol] = true;
-                                } else {
-                                    floodFill(clickedRow, clickedCol);
-                                }
-
-                                if (checkWin()) {
-                                    markedLabel.setText("COMPLETED!");
-                                }
-                            }
-
-                        } else if (SwingUtilities.isRightMouseButton(e)) {
-                            buttonGrid[clickedRow][clickedCol].setText("F");
-                            markedCounter++;
-                            markedLabel.setText("Marked: " + mines.getMarked() + " / " + mines.getNumMines());
-                        }
-                    }
-                });
-
-                buttonGrid[row][col] = button;
-                add(button);
-            }
-        }
-
-        int height = mines.getGameHeight();
-        int width = mines.getGameWidth();
-
-        JFrame frame = new JFrame("Mines");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(width, height);
-        frame.add(mines);
-
-        JMenuBar menuBar = new JMenuBar();
-
-        // game type menu and sub menu
-        JMenu gameTypeMenu = new JMenu("Game type");
-        JMenuItem gameTypeEasy = new JMenuItem("Easy 9x9, 10 mines");
-        JMenuItem gameTypeMedium = new JMenuItem("Medium 16x16, 40 mines");
-        JMenuItem gameTypeHard = new JMenuItem("Hard 16x30, 99 mines");
-
-        JMenuItem newGameItem = new JMenuItem("New game");
-        JMenuItem restartGameItem = new JMenuItem("Restart game");  // TODO: Implement
-
-        JMenuItem undoMoveItem = new JMenuItem("Undo move");    // TODO: Implement
-        JMenuItem redoMoveItem = new JMenuItem("Redo move");    // TODO: Implement
-        JMenuItem solveGameItem = new JMenuItem("Solve game");
-
-
-        // add listeners
-
-        // start a new game
-        newGameItem.addActionListener(e -> {
-            Game currentGame = getGameSize();
-            frame.setVisible(false);
-            refreshFrame(frame, currentGame);
-        });
-
-        // for changing game types (size)
-        gameTypeEasy.addActionListener(e -> {
-            Game easy = new Game(300, 300, 9, 9, 10);
-            frame.setVisible(false);
-            refreshFrame(frame, easy);
-        });
-
-        gameTypeMedium.addActionListener(e -> {
-            Game medium = new Game(500, 500,16, 16, 40);
-            frame.setVisible(false);
-            refreshFrame(frame, medium);
-        });
-
-        gameTypeHard.addActionListener(e -> {
-            Game hard = new Game(600, 1100, 16, 30, 99);
-            frame.setVisible(false);
-            refreshFrame(frame, hard);
-        });
-
-        gameTypeMenu.add(gameTypeEasy);
-        gameTypeMenu.add(gameTypeMedium);
-        gameTypeMenu.add(gameTypeHard);
-
-        // solves the current game
-        solveGameItem.addActionListener(e -> {
-            if (!isFirstClick.get()) {
-                for (int i = 0; i < mineLocations.length; i++) {
-                    for (int j = 0; j < mineLocations.length; j++) {
-                        JButton button = buttonGrid[i][j];
-
-                        // check if it's a mine
-                        if (mineLocations[i][j]) {
-                            button.setText("F");
-                        } else {
-                            // lower button and change color
-                            int nearbyMines = countNearbyMines(i, j);
-                            button.setBorder(new BevelBorder(BevelBorder.LOWERED));
-                            button.setBackground(Color.LIGHT_GRAY);
-
-                            // if there are nearby mines, show the number
-                            if (nearbyMines != 0) {
-                                button.setForeground(getColor(nearbyMines));
-                                button.setText(String.valueOf(nearbyMines));
-                            }
-                        }
-                    }
-                }
-            } else {
-                JOptionPane.showMessageDialog(frame, "The game has not been started yet", "Error", JOptionPane.INFORMATION_MESSAGE);
-            }
-        });
-
-        // add to menu bar
-        menuBar.add(gameTypeMenu);
-        menuBar.add(newGameItem);
-        menuBar.add(restartGameItem);
-        menuBar.add(undoMoveItem);
-        menuBar.add(redoMoveItem);
-        menuBar.add(solveGameItem);
-
-        JPanel bottomPanel = new JPanel();
-        bottomPanel.setLayout(new BorderLayout());
-
-        bottomPanel.add(timerLabel, BorderLayout.WEST);
-        bottomPanel.add(markedLabel, BorderLayout.CENTER);
-        bottomPanel.add(deathLabel, BorderLayout.EAST);
-
-
-        frame.setJMenuBar(menuBar);
-        frame.add(bottomPanel, BorderLayout.SOUTH);
-        frame.setVisible(true);
+        repaint();
     }
 
-    private boolean checkWin() {
-        for (int i = 0; i < uncoveredLocations.length; i++) {
-            for (int j = 0; j < uncoveredLocations[i].length; j++) {
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
 
-                if (!mineLocations[i][j] && !uncoveredLocations[i][j]) {
-                    return false;  // found a covered non-mine button
+        if (stationPairMap != null) {
+            List<Pair<Station, Station>> pairList = new ArrayList<>(stationPairMap.keySet());
+
+            for (Pair<Station, Station> pair : pairList) {
+                Station first = pair.getFirst();
+                Station second = pair.getSecond();
+
+                int firstX = first.getX() * 15; // scale to fit canvas
+                int firstY = first.getY() * 15; // scale to fit canvas
+
+                int secondX = second.getX() * 15; // scale to fit canvas
+                int secondY = second.getY() * 15; // scale to fit canvas
+
+                // set colors for each function, and plot
+                if (first.getFunction().equals("Machinist")) {
+                    g.setColor(Color.BLUE);
+                    g.fillRect(firstX, firstY, 10, 10);
+                    if (second.getFunction().equals("Machinist")) {
+                        g.setColor(Color.BLUE);
+                        g.fillRect(firstX, firstY, 10, 10);
+                    } else if (second.getFunction().equals("Assembly")) {
+                        g.setColor(Color.GREEN);
+                        g.fillOval(secondX, secondY, 10, 10);
+                    }
+                } else {
+                    g.setColor(Color.GREEN);
+                    g.fillOval(firstX, firstY, 10, 10);
                 }
             }
         }
-        return true;    // all non-mine buttons are uncovered. game is won
+    }
+}
+
+
+class Station {
+    private String name;
+    private int x;
+    private int y;
+    private String function;
+    private double fitness;
+
+    public Station(String name, int x, int y, String function, double fitness) {
+        this.name = name;
+        this.x = x;
+        this.y = y;
+        this.function = function;
+        this.fitness = fitness;
     }
 
-    private void refreshFrame(JFrame frame, Game newGame) {
-        frame.getContentPane().removeAll();
-        frame.add(newGame);
-        newGame.play(newGame);
-        frame.revalidate();
-        frame.repaint();
+    public String getLocationKey() {
+        return String.format("(%d, %d)", getX(), getY());
     }
 
-    private Color getColor(int nearbyMines) {
-        if (nearbyMines != 0) {
-            if (nearbyMines == 1) {
-                return Color.BLUE;
-            } else if (nearbyMines == 2) {
-                return Color.GREEN;
-            } else if (nearbyMines == 3) {
-                return Color.RED;
-            } else if (nearbyMines == 4) {
-                return new Color(0, 0, 139);
-            } else if (nearbyMines == 5) {
-                return new Color(139, 0, 0);
-            } else if (nearbyMines == 6) {
-                return Color.CYAN;
-            } else if (nearbyMines == 7) {
-                return Color.BLACK;
-            } else if (nearbyMines == 8) {
-                return Color.GRAY;
-            }
-        }
-        return null;
+    String getName() { return name; }
+    int getX() { return x; }
+    int getY() { return y; }
+    String getFunction() { return function; }
+    double getFitness() { return fitness; }
+    int[] getGenome() {
+        return new int[]{x, y};
     }
 
-    private void floodFill(int row, int col) {
-        int numNearbyMines = countNearbyMines(row, col);
+    void setName(String name) { this.name = name; }
+    void setX(int x) { this.x = x; }
+    void setY(int y) { this.y = y; }
+    void setFunction(String function) { this.function = function; }
+    void setFitness(double fitness) { this.fitness = fitness; }
+    void setGenome(int[] genome) {
+        this.x = genome[0];
+        this.y = genome[1];
+    }
+}
 
-        // base cases
-        if (row < 0 || row >= mineLocations.length || col < 0 || col >= mineLocations[0].length ||
-                uncoveredLocations[row][col] || mineLocations[row][col]) {
-            return;
-        }
+class Pair<A, B> {
+    private final A first;
+    private final B second;
 
-        uncoveredLocations[row][col] = true;
-
-        JButton button = buttonGrid[row][col];
-        if (numNearbyMines > 0) {
-            button.setText(String.valueOf(numNearbyMines));
-            button.setForeground(getColor(numNearbyMines));
-            button.setBorder(new BevelBorder(BevelBorder.LOWERED));
-            return;
-        } else if (numNearbyMines == 0) {
-            button.setBorder(new BevelBorder(BevelBorder.LOWERED));
-        }
-
-        for (int i = -1; i <= 1; i++) {
-            for (int j = -1; j <= 1; j++) {
-
-                if (i == 0 && j == 0) {
-                    continue;
-                }
-                floodFill(row + i, col + j);
-            }
-        }
+    public Pair(A first, B second) {
+        this.first = first;
+        this.second = second;
     }
 
-    private int countNearbyMines(int row, int col) {
-        boolean[][] mineLocations = getMineLocations();
-        int mineCount = 0;
-
-        for (int i = -1; i <= 1; i++) {     // checks rows above, same, below as clicked row
-            for (int j = -1; j <= 1; j++) {  // checks col left, same, right as clicked col
-                int newRow = row + i;
-                int newCol = col + j;
-
-                if (newRow == row && newCol == col) {   // don't check clicked row & col
-                    continue;
-                }
-
-                // check boundaries
-                if (newRow >= 0 && newRow < mineLocations.length && newCol >= 0 && newCol < mineLocations[0].length) {
-                    if (mineLocations[newRow][newCol]) {
-                        mineCount++;
-                    }
-                }
-            }
-        }
-        return mineCount;
+    public A getFirst() {
+        return first;
     }
 
-    private void generateMines(int safeRow, int safeCol) {
-        int maxMines = getNumMines();
-        int mineCount = 0;
-        int rows = getRows();
-        int cols = getCols();
-        Random random = new Random();
-        boolean[][] mineLocations = new boolean[rows][cols];
-
-        for (int row = 0; row < rows; row++) {
-            for (int col = 0; col < cols; col++) {
-                if (Math.abs(row - safeRow) > 1 || Math.abs(col - safeCol) > 1) {
-                    if (random.nextInt(4) == 1 && mineCount != maxMines) {
-                        mineLocations[row][col] = true;         // a cell that has a mine has boolean value true
-                        //buttonGrid[row][col].setText("b");      // TODO: remove
-                        uncoveredLocations[row][col] = false;   // every cell is currently covered
-                        mineCount++;
-                    }
-                }
-            }
-        }
-        setMineLocations(mineLocations);
-
-    }
-
-    int getGameHeight() {
-        return height;
-    }
-    int getGameWidth() {
-        return width;
-    }
-    int getRows() {
-        return rows;
-    }
-    int getCols() {
-        return cols;
-    }
-
-    int getNumMines() {
-        return numMines;
-    }
-
-    boolean[][] getMineLocations() {
-        return mineLocations;
-    }
-
-    void setMineLocations(boolean[][] mineLocations) {
-        this.mineLocations = mineLocations;
-    }
-
-    int getMarked() {
-        return markedCounter;
-    }
-
-    int getDeaths() {
-        return deathCounter;
-    }
-
-    Game getGameSize() {
-        return new Game(getGameHeight(), getGameWidth(), getRows(), getCols(), getNumMines());
+    public B getSecond() {
+        return second;
     }
 }
